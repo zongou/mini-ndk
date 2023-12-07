@@ -1,0 +1,6 @@
+resource_dir
+sysroot
+tests/output
+bin/zig
+bin/clang
+bin/clang-*

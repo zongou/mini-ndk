@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+MININDK_DIR=$(realpath "$(dirname $0)/..")
+BIN_DIR="${MININDK_DIR}/bin"
+RESOURCE_DIR="${MININDK_DIR}/resource_dir"
+SYSROOT="${MININDK_DIR}/sysroot"
+TARGET=aarch64-linux-android24
+
+# export LD=ld.lld
+# export LINKER=${LD}
+# -fuse-ld=${BIN_DIR}/ld.lld \
+
+CLANG="${BIN_DIR}/zig clang"
+
+${CLANG} \
+	-resource-dir "${RESOURCE_DIR}" \
+	--sysroot="${SYSROOT}" \
+	--target="${TARGET}" \
+	-isystem "${SYSROOT}/usr/include/c++/v1" \
+	-isystem "${SYSROOT}/usr/include" \
+	-isystem "${SYSROOT}/usr/include/aarch64-linux-android" \
+	-xc - \
+	"$@" \
+	<<-EOF
+		#include <stdio.h>
+
+		int main() {
+		  printf("%s\n", "Hello, C!");
+		  return 0;
+		}
+	EOF
+
+${CLANG} \
+	-resource-dir "${RESOURCE_DIR}" \
+	--sysroot="${SYSROOT}" \
+	--target="${TARGET}" \
+	-isystem "${SYSROOT}/usr/include/c++/v1" \
+	-isystem "${SYSROOT}/usr/include" \
+	-isystem "${SYSROOT}/usr/include/aarch64-linux-android" \
+	-xc++ -lc++ - \
+	"$@" \
+	<<-EOF
+		#include <iostream>
+		using namespace std;
+
+		int main() {
+		  cout << "Hello, C++!\n";
+		  return 0;
+		}
+	EOF
+
+${CLANG} \
+	-resource-dir "${RESOURCE_DIR}" \
+	--sysroot="${SYSROOT}" \
+	--target="${TARGET}" \
+	-xc - \
+	"$@" \
+	<<-EOF
+		#include <stdio.h>
+
+		int main() {
+		  printf("%s\n", "Hello, C!");
+		  return 0;
+		}
+	EOF
+
+${CLANG} \
+	-resource-dir "${RESOURCE_DIR}" \
+	--sysroot="${SYSROOT}" \
+	--target="${TARGET}" \
+	-xc++ -lc++ - \
+	"$@" \
+	<<-EOF
+		#include <iostream>
+		using namespace std;
+
+		int main() {
+		  cout << "Hello, C++!\n";
+		  return 0;
+		}
+	EOF

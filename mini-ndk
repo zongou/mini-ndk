@@ -1,0 +1,202 @@
+#!/bin/sh
+## [Shell Command Language] (https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07_04)
+set -eu
+
+## This script is designed to work in script dir (this repo).
+## resources will be placed in this dir,
+## we seperate our data from target toolchain dir to make upgrading toolchain esier.
+
+SCRIPT_NAME="$(basename $0)"
+SCRIPT_DIR="$(dirname $0)"
+SCRIPT_PID="$$"
+SCRIPT_ARGS="$*"
+
+## Colorful output
+## shellcheck disable=SC2034
+{
+	CR='\r'
+	LF='\n'
+	DECRC='\0338'
+	EL2='\033[2K'
+	ED='\033[J'
+	COF='\033[?25l' ## Cursor Off
+	CON='\033[?25h' ## Cursor On
+
+	## Set default color empty
+	for color_var in DEF BLD DIM CUR UND INV RED GRN YLW BLU MGN CYN WHT; do
+		eval ${color_var}=''
+	done
+
+	if test "${TERM+1}"; then
+		case "$TERM" in
+		xterm | xterm-256color)
+			DEF='\033[0m' ## Default color and effects
+			BLD='\033[1m' ## Bold\brighter
+			DIM='\033[2m' ## Dim\darker
+			CUR='\033[3m' ## Italic font
+			UND='\033[4m' ## Underline
+			INV='\033[7m' ## Inverted
+
+			RED='\033[31m'
+			GRN='\033[32m'
+			YLW='\033[33m'
+			BLU='\033[34m'
+			MGN='\033[35m'
+			CYN='\033[36m'
+			WHT='\033[37m'
+			;;
+		esac
+	fi
+}
+
+msg_raw() { if test $# -gt 0; then printf "$*" >&2; elif ! test -t 0; then printf "$(cat)" >&2; fi; }
+msg() { if test $# -gt 0; then printf "$*\n" >&2; elif ! test -t 0; then printf "$(cat)\n" >&2; fi; }
+msg_info() { msg "${DIM}[*]${DEF} ${CYN}${*}${DEF}"; }
+msg_warn() { msg "${YLW}[!]${DEF} ${CYN}${*}${DEF}"; }
+err() { msg "${RED}ERROR${DEF}: $*" && exit 1; }
+err_no_args() { err "no argument provided."; }
+err_args_not_handled() { err "argument not handled: $*"; }
+
+test_is_android() { ! test -f /etc/os-release && command -v getprop >/dev/null 2>&1; }
+test_is_termux() { test_is_android && test "${TERMUX_VERSION+1}"; }
+test_is_anotherterm() { test_is_android && test "${TERMSH+1}"; }
+
+print_var() {
+	while test $# -gt 0; do
+		eval "msg \"${1}=\$${1}\""
+		shift
+	done
+}
+
+command_test() {
+	MININDK_DIR="$(dirname $0)"
+	BIN_DIR="${MININDK_DIR}/bin"
+	RESOURCE_DIR="${MININDK_DIR}/resource_dir"
+	SYSROOT="${MININDK_DIR}/sysroot"
+	TARGET=aarch64-linux-android24
+	CLANG="${BIN_DIR}/zig clang"
+
+	msg "Test C compiler..."
+	${CLANG} \
+		-resource-dir "${RESOURCE_DIR}" \
+		--sysroot="${SYSROOT}" \
+		--target="${TARGET}" \
+		-isystem "${SYSROOT}/usr/include/c++/v1" \
+		-isystem "${SYSROOT}/usr/include" \
+		-isystem "${SYSROOT}/usr/include/aarch64-linux-android" \
+		-xc - \
+		"$@" \
+		-o ${MININDK_DIR}/tests/output/hello-c \
+		<<-EOF
+			#include <stdio.h>
+
+			int main() {
+			  printf("%s\n", "Hello, C!");
+			  return 0;
+			}
+		EOF
+	msg "file hello-c"
+	file ${MININDK_DIR}/tests/output/hello-c
+
+	msg "Test C++ compiler..."
+	${CLANG} \
+		-resource-dir "${RESOURCE_DIR}" \
+		--sysroot="${SYSROOT}" \
+		--target="${TARGET}" \
+		-isystem "${SYSROOT}/usr/include/c++/v1" \
+		-isystem "${SYSROOT}/usr/include" \
+		-isystem "${SYSROOT}/usr/include/aarch64-linux-android" \
+		-xc++ -lc++ - \
+		"$@" \
+		-o ${MININDK_DIR}/tests/output/hello-cpp \
+		<<-EOF
+			#include <iostream>
+			using namespace std;
+
+			int main() {
+			  cout << "Hello, C++!\n";
+			  return 0;
+			}
+		EOF
+
+	msg "file hello-cpp"
+	file ${MININDK_DIR}/tests/output/hello-cpp
+}
+
+setup_ndk() {
+	if test $# -eq 1; then
+		if test -d "$1"; then
+			ANDROID_NDK_HOME="$1"
+		else
+			err "dir not exists: [$1]"
+		fi
+	elif test "${ANDROID_NDK_HOME+1}"; then
+		if ! test -d "${ANDROID_NDK_HOME}"; then
+			err "found ANDROID_NDK_HOME=${ANDROID_NDK_HOME}, but dir not exists"
+		fi
+	else
+		info "Usage: ${SCRIPT_NAME} setup [NDK_DIR]"
+		err "please specify ndk_dir or export ANDROID_NDK_HOME"
+	fi
+
+	## ndk
+	ndk_resource_dir="$(find "${ANDROID_NDK_HOME}" -path '*/lib/clang/[0-9]?')"
+	print_var ndk_resource_dir
+	ndk_sysroot_dir="$(find ${ANDROID_NDK_HOME} -name sysroot -type d)"
+	print_var ndk_sysroot_dir
+
+	## Copy ndk resource dir and sysroot dir
+	msg "Copying ndk_resource_dir to ${SCRIPT_DIR}/resource_dir ..."
+	rm -rf ${SCRIPT_DIR}/resource_dir
+	cp -r "${ndk_resource_dir}" ${SCRIPT_DIR}/resource_dir
+	msg "Copying ndk_sysroot_dir to ${SCRIPT_DIR}/sysroot ..."
+	rm -rf ${SCRIPT_DIR}/sysroot
+	cp -r "${ndk_sysroot_dir}" ${SCRIPT_DIR}/sysroot
+}
+
+main_func() {
+	SCRIPT_NAME="$(basename $0)"
+	_show_help() {
+		msg <<-EOF
+			This is the help for ${SCRIPT_NAME}
+
+			Usage:
+			  ${SCRIPT_NAME} [OPTION...] [COMMAND]
+
+			Options:
+			  -h,--help  show this help
+
+			Commands:
+			  command_a  command a can ...
+		EOF
+	}
+
+	if test $# -gt 0; then
+		while test $# -gt 0; do
+			case "$1" in
+			-h | --help)
+				_show_help
+				break
+				;;
+			test)
+				shift
+				command_test "$@"
+				break
+				;;
+			setup)
+				shift
+				setup_ndk "$@"
+				break
+				;;
+			*)
+				err_args_not_handled "$@"
+				shift
+				;;
+			esac
+		done
+	else
+		_show_help
+	fi
+}
+
+main_func "$@"

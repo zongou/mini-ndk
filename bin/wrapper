@@ -1,0 +1,98 @@
+#!/bin/sh
+set -eu
+
+MININDK_DIR=$(realpath "$(dirname "$0")/..")
+BIN_DIR="${MININDK_DIR}/bin"
+
+BIN=${BIN_DIR}/zig
+
+is_zig() { echo "${BIN}" | grep -q zig; }
+
+if test -h "$0" && ! test "$(basename "$(readlink "$0")")" = "$(basename "$(readlink -f "$0")")"; then
+	WRAPPER="$(readlink "$0")"
+else
+	WRAPPER="$(basename "$0")"
+fi
+
+case "${WRAPPER}" in
+ar | cc | c++ | dlltool | lib | ranlib | objcopy | ld.lld)
+	if is_zig; then
+		set -- "${WRAPPER}" "$@"
+	else
+		printf "wrapper:${WRAPPER}:\033[31mERROR\033[0m: not zig\n" 1>&2
+		exit 1
+	fi
+	;;
+clang | clang++ | *-linux-android*-clang | *-linux-android*-clang++)
+	if ! test "${1+1}" || { test "${1+1}" && ! test "$1"x = "-cc1"x; }; then
+		RESOURCE_DIR="${MININDK_DIR}/resource_dir"
+		SYSROOT="${MININDK_DIR}/sysroot"
+
+		## Default target for clang and clang++
+		TARGET=aarch64-linux-android24
+
+		## Get target triple
+		case "${WRAPPER}" in
+		*-linux-android*-clang | *-linux-android*-clang++)
+			TARGET=$(echo ${WRAPPER} | grep -E -o "(aarch64|x86_64|i686|riscv64)-linux-android[1-9][0-9]|armv7a-linux-androideabi[1-9][0-9]")
+			;;
+		esac
+
+		## These options are required for llvmbox
+		if ! is_zig && "${BIN}" -v 2>&1 | grep -q llvmbox; then
+			## Get sys_include_dir
+			case "${TARGET}" in
+			aarch64-linux-android*)
+				sys_include_dir="${SYSROOT}/usr/include/aarch64-linux-android"
+				;;
+			armv7a-linux-androideabi*)
+				sys_include_dir="${SYSROOT}/usr/include/arm-linux-androideabi"
+				;;
+			x86_64-linux-android*)
+				sys_include_dir="${SYSROOT}/usr/include/x86_64-linux-android"
+				;;
+			i686-linux-android*)
+				sys_include_dir="${SYSROOT}/usr/include/i686-linux-android"
+				;;
+			riscv64-linux-android*)
+				sys_include_dir="${SYSROOT}/usr/include/riscv64-linux-android"
+				;;
+			esac
+
+			set -- "$@" \
+				-isystem "${SYSROOT}/usr/include/c++/v1" \
+				-isystem "${SYSROOT}/usr/include" \
+				-isystem "${sys_include_dir}"
+		fi
+
+		set -- \
+			-resource-dir "${RESOURCE_DIR}" \
+			--sysroot="${SYSROOT}" \
+			--target="${TARGET}" \
+			"$@"
+
+		case "${WRAPPER}" in
+		clang++ | *-linux-android*-clang++)
+			set -- -xc++ -lc++ "$@"
+			;;
+		esac
+	fi
+
+	if is_zig; then
+		set -- clang "$@"
+	fi
+	;;
+*)
+	cat <<EOF 1>&2
+Link this file to create wrapper
+Usage:
+  ln -s ${WRAPPER} aarch64-linux-android24-clang
+  ln -s ${WRAPPER} aarch64-linux-android24-clang++
+  ln -s ${WRAPPER} ld.lld
+EOF
+	exit
+	;;
+esac
+
+${BIN} "$@"
+# echo ${BIN} "$@"
