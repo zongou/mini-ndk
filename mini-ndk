@@ -1,0 +1,122 @@
+#!/bin/sh
+set -eu
+
+MINI_NDK_ROOT="$(dirname "$0")"
+SCRIPT_NAME="$(basename "$0")"
+CUSTOM_NDK_ROOT="${MINI_NDK_ROOT}/ndk_root"
+
+msg() { printf "%s$(test $# -eq 0 && cat || echo "$@")\n" >&2; }
+
+command_get_ndk_resource() {
+	if test $# -eq 1; then
+		if test -d "$1"; then
+			ANDROID_NDK_ROOT="$1"
+		else
+			err "dir not exists: [$1]"
+		fi
+	elif test "${ANDROID_NDK_ROOT+1}"; then
+		if ! test -d "${ANDROID_NDK_ROOT}"; then
+			err "found ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT}, but dir not exists"
+		fi
+	else
+		msg "Usage: ${SCRIPT_NAME} setup [NDK_DIR]"
+		err "please specify ndk_dir or export ANDROID_NDK_ROOT"
+	fi
+
+	ndk_resource_dir="$(find "${ANDROID_NDK_ROOT}" -path '*/lib/clang/[0-9]?')"
+	ndk_sysroot_dir="$(find "${ANDROID_NDK_ROOT}" -name sysroot -type d)"
+
+	msg "Copying ndk clang resource dir ..."
+	rm -rf "${MINI_NDK_ROOT}/resource"
+	cp -r "${ndk_resource_dir}" "${MINI_NDK_ROOT}/resource"
+
+	msg "Copying ndk sysroot ..."
+	rm -rf "${MINI_NDK_ROOT}/sysroot"
+	cp -r "${ndk_sysroot_dir}" "${MINI_NDK_ROOT}/sysroot"
+
+	mkdir -p "${CUSTOM_NDK_ROOT}"
+	for dir in build meta source.properties sources; do
+		if ! test -e "${dir}"; then
+			cp -r "${ANDROID_NDK_ROOT}/${dir}" "./${CUSTOM_NDK_ROOT}"
+		fi
+	done
+
+	mkdir -p "${CUSTOM_NDK_ROOT}/prebuilt/linux-x86_64"
+	mkdir -p "${CUSTOM_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64"
+	ln -snf ../../../../../sysroot "${CUSTOM_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+	ln -snf ../../../../../bin "${CUSTOM_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+}
+
+command_make_target_wrappers() {
+	msg "Making android target wrappers ..."
+	mkdir -p "${MINI_NDK_ROOT}/bin"
+	abi_min="$(cat "${CUSTOM_NDK_ROOT}/meta/platforms.json" | grep "\"min\": " | grep -E -o "[0-9]+")"
+	abi_max="$(cat "${CUSTOM_NDK_ROOT}/meta/platforms.json" | grep "\"max\": " | grep -E -o "[0-9]+")"
+
+	for n in $(seq "${abi_min}" "${abi_max}"); do
+		for abi in "aarch64-linux-android${n}" "armv7a-linux-androideabi${n}" "x86_64-linux-android${n}" "i686-linux-android${n}"; do
+			ln -snf ../wrappers/target_wrapper "${MINI_NDK_ROOT}/bin/${abi}-clang"
+			ln -snf ../wrappers/target_wrapper "${MINI_NDK_ROOT}/bin/${abi}-clang++"
+		done
+	done
+
+	## openssl checks clang, we need to symlink clang too
+	ln -snf ../wrappers/target_wrapper "${MINI_NDK_ROOT}/bin/clang"
+	ln -snf ../wrappers/target_wrapper "${MINI_NDK_ROOT}/bin/clang++"
+}
+
+command_setup_ndk() {
+	command_get_ndk_resource "$@"
+	command_make_target_wrappers
+}
+
+main_func() {
+	SCRIPT_NAME="$(basename "$0")"
+	_show_help() {
+		cat >/dev/fd/2 <<-EOF
+			Build android targeted binary with llvm toolchain.
+
+			Usage:
+			  ${SCRIPT_NAME} setup [path_to_ndk]
+			  ${SCRIPT_NAME} get-ndk-resource [path_to_ndk]
+			  ${SCRIPT_NAME} make-target-wrappers
+
+			Options:
+			  -h,--help  show this help
+		EOF
+	}
+
+	if test $# -gt 0; then
+		while test $# -gt 0; do
+			case "$1" in
+			-h | --help)
+				_show_help
+				break
+				;;
+			get-ndk-resource)
+				shift
+				command_get_ndk_resource "$@"
+				break
+				;;
+			make-target-wrappers)
+				shift
+				command_make_target_wrappers "$@"
+				break
+				;;
+			setup)
+				shift
+				command_setup_ndk "$@"
+				break
+				;;
+			*)
+				err_args_not_handled "$@"
+				shift
+				;;
+			esac
+		done
+	else
+		_show_help
+	fi
+}
+
+main_func "$@"

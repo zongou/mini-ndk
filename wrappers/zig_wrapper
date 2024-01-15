@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+EXE="$(basename "$0")"
+
+case "${EXE}" in
+ar | cc | c++ | dlltool | lib | ranlib | objcopy | ld.lld)
+	set -- "${EXE}" "$@"
+
+	## Zig doesn't properly handle these flags so we have to rewrite/ignore.
+	## None of these affect the actual compilation target.
+	## https://github.com/ziglang/zig/issues/9948
+	case "${EXE}" in
+	cc | c++)
+		for argv in "$@"; do
+			case "${argv}" in
+			-Wp,-MD,*) set -- "$@" "-MD" "-MF" "$(echo "$argv" | sed 's/^-Wp,-MD,//')" ;;
+			-Wl,--warn-common | -Wl,--verbose | -Wl,-Map,*) ;;
+			*) set -- "$@" "${argv}" ;;
+			esac
+			shift
+		done
+		;;
+	esac
+	;;
+*)
+	if test -h "$0"; then
+		exec "$(dirname "$0")/$(readlink "$0")" "$@"
+	fi
+	exit
+	;;
+esac
+
+"${ZIG-zig}" "$@"

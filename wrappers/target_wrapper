@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+MINI_NDK_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
+RESOURCE_DIR=${MINI_NDK_ROOT}/resource
+SYSROOT=${MINI_NDK_ROOT}/sysroot
+TARGET=aarch64-linux-android21
+CLANG=${CLANG-clang}
+# CLANG="${ZIG-zig} clang"
+
+EXE=$(basename "$0")
+case "${EXE}" in
+clang | clang++ | *-linux-android*-clang | *-linux-android*-clang++)
+	if ! test "${1+1}" || { test "${1+1}" && ! test "$1"x = "-cc1"x; }; then
+		## Get target triple
+		case "${EXE}" in
+		*-linux-android*-clang | *-linux-android*-clang++)
+			TARGET=$(echo "${EXE}" | grep -E -o "(aarch64|x86_64|i686|riscv64)-linux-android[1-9][0-9]|armv7a-linux-androideabi[1-9][0-9]")
+
+			case "${EXE}" in
+			*-linux-android*-clang++)
+				set -- -lc++ "$@" -Wno-unused-command-line-argument
+				;;
+			esac
+			;;
+		esac
+
+		## These options are needed for llvmbox
+		if ${CLANG} -v 2>&1 | grep -q llvmbox; then
+			## Get sys_include_dir
+			sys_include_dir="${SYSROOT}/usr/include/$(echo "${TARGET}" | sed 's/armv7a/arm/' | sed -E 's/(android(eabi)?)[0-9]+/\1/')"
+			set -- "$@" \
+				-isystem "${SYSROOT}/usr/include/c++/v1" \
+				-isystem "${SYSROOT}/usr/include" \
+				-isystem "${sys_include_dir}"
+		elif ${CLANG} -v 2>&1 | grep -q alpine; then
+			set -- "$@" \
+				-B "${MINI_NDK_ROOT}/wrappers/alpine"
+		elif ${CLANG} -v 2>&1 | grep -q zig; then
+			set -- "$@" \
+				-B "${MINI_NDK_ROOT}/wrappers/zig"
+		fi
+
+		set -- \
+			-B "${MINI_NDK_ROOT}/bin" \
+			-resource-dir "${RESOURCE_DIR}" \
+			--sysroot="${SYSROOT}" \
+			--target="${TARGET}" \
+			"$@"
+	fi
+	;;
+*)
+	# shellcheck disable=SC2059
+	printf "Usage:\n  ln -s ${EXE} aarch64-linux-android24-clang\n"
+	exit 1
+	;;
+esac
+
+${CLANG} "$@"
